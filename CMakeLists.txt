@@ -118,7 +118,7 @@ ADD_EXECUTABLE(test-minicrypto.t
     lib/cifra/aes256.c
     lib/cifra/random.c)
 SET(TEST_EXES test-minicrypto.t)
-
+idf_build_executable(test-minicrypto.t)
 
 SET(PTLSBENCH_LIBS
     picotls-minicrypto picotls-core)
@@ -212,6 +212,8 @@ IF (WITH_MBEDTLS)
     TARGET_LINK_LIBRARIES(test-mbedtls.t
         picotls-minicrypto picotls-mbedtls
         ${MBEDTLS_LIBRARIES})
+    idf_build_executable(test-mbedtls.t)
+
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPTLS_HAVE_MBEDTLS=1")
     LIST(APPEND PTLSBENCH_LIBS picotls-mbedtls ${MBEDTLS_LIBRARIES})
 ENDIF ()
