@@ -28,6 +28,8 @@ IF (WITH_FUSION)
 ENDIF ()
 OPTION(WITH_AEGIS "enable AEGIS (requires libaegis)" ${WITH_AEGIS})
 OPTION(WITH_MBEDTLS "enable MBEDTLS" ${WITH_MBEDTLS})
+option(picotls_BUILD_TESTS OFF)
+option(picotls_BUILD_BENCH OFF)
 
 SET(CMAKE_C_FLAGS "-std=c99 -Wall -O2 -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
 INCLUDE_DIRECTORIES(
@@ -103,22 +105,24 @@ ADD_LIBRARY(picotls-minicrypto
     lib/asn1.c
     lib/ffx.c)
 TARGET_LINK_LIBRARIES(picotls-minicrypto picotls-core)
-ADD_EXECUTABLE(test-minicrypto.t
-    ${MINICRYPTO_LIBRARY_FILES}
-    ${MINICRYPTO_AEGIS_FILES}
-    deps/picotest/picotest.c
-    ${CORE_TEST_FILES}
-    t/minicrypto.c
-    lib/asn1.c
-    lib/pembase64.c
-    lib/ffx.c
-    lib/cifra/x25519.c
-    lib/cifra/chacha20.c
-    lib/cifra/aes128.c
-    lib/cifra/aes256.c
-    lib/cifra/random.c)
-SET(TEST_EXES test-minicrypto.t)
-
+if (picotls_BUILD_TESTS)
+    ADD_EXECUTABLE(test-minicrypto.t
+       ${MINICRYPTO_LIBRARY_FILES}
+       ${MINICRYPTO_AEGIS_FILES}
+       deps/picotest/picotest.c
+       ${CORE_TEST_FILES}
+       t/minicrypto.c
+       lib/asn1.c
+       lib/pembase64.c
+       lib/ffx.c
+       lib/cifra/x25519.c
+       lib/cifra/chacha20.c
+       lib/cifra/aes128.c
+       lib/cifra/aes256.c
+       lib/cifra/random.c)
+    SET(TEST_EXES test-minicrypto.t)
+    idf_build_executable(test-minicrypto.t)
+endif()
 
 SET(PTLSBENCH_LIBS
     picotls-minicrypto picotls-core)
@@ -205,23 +209,29 @@ IF (WITH_MBEDTLS)
     message(STATUS "mbedtls libraries: ${MBEDTLS_LIBRARIES}")
     INCLUDE_DIRECTORIES(${MBEDTLS_INCLUDE_DIRS})
     ADD_LIBRARY(picotls-mbedtls lib/mbedtls.c)
-    ADD_EXECUTABLE(test-mbedtls.t
-        deps/picotest/picotest.c
-        ${CORE_TEST_FILES}
-        t/mbedtls.c)
-    TARGET_LINK_LIBRARIES(test-mbedtls.t
-        picotls-minicrypto picotls-mbedtls
-        ${MBEDTLS_LIBRARIES})
+    if (picotls_BUILD_TESTS)
+        ADD_EXECUTABLE(test-mbedtls.t
+           deps/picotest/picotest.c
+           ${CORE_TEST_FILES}
+           t/mbedtls.c)
+        TARGET_LINK_LIBRARIES(test-mbedtls.t
+           picotls-minicrypto picotls-mbedtls
+           ${MBEDTLS_LIBRARIES})
+        idf_build_executable(test-mbedtls.t)
+    endif()
+
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPTLS_HAVE_MBEDTLS=1")
     LIST(APPEND PTLSBENCH_LIBS picotls-mbedtls ${MBEDTLS_LIBRARIES})
 ENDIF ()
 
-ADD_EXECUTABLE(ptlsbench t/ptlsbench.c)
-SET_TARGET_PROPERTIES(ptlsbench PROPERTIES COMPILE_FLAGS "-DPTLS_MEMORY_DEBUG=1")
-TARGET_LINK_LIBRARIES(ptlsbench ${PTLSBENCH_LIBS})
-IF (NOT WITH_FUSION)
-    SET_TARGET_PROPERTIES(ptlsbench PROPERTIES EXCLUDE_FROM_ALL 1)
-ENDIF ()
+if (picotls_BUILD_BENCH)
+    ADD_EXECUTABLE(ptlsbench t/ptlsbench.c)
+    SET_TARGET_PROPERTIES(ptlsbench PROPERTIES COMPILE_FLAGS "-DPTLS_MEMORY_DEBUG=1")
+    TARGET_LINK_LIBRARIES(ptlsbench ${PTLSBENCH_LIBS})
+    IF (NOT WITH_FUSION)
+       SET_TARGET_PROPERTIES(ptlsbench PROPERTIES EXCLUDE_FROM_ALL 1)
+    ENDIF ()
+endif()
 
 ADD_CUSTOM_TARGET(check env BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR} prove --exec '' -v ${CMAKE_CURRENT_BINARY_DIR}/*.t t/*.t WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} DEPENDS ${TEST_EXES} cli)
 
