@@ -1,4 +1,4 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.12)
+CMAKE_MINIMUM_REQUIRED(VERSION 2.8.12...4.0)
 CMAKE_POLICY(SET CMP0003 NEW)
 
 PROJECT(picotls)
@@ -60,7 +60,8 @@ SET(CORE_FILES
     lib/pembase64.c)
 SET(CORE_TEST_FILES
     t/hpke.c
-    t/picotls.c)
+    t/picotls.c
+    t/quiclb.c)
 IF (WITH_DTRACE)
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPICOTLS_USE_DTRACE=1")
     DEFINE_DTRACE_DEPENDENCIES(${PROJECT_SOURCE_DIR}/picotls-probes.d picotls)
@@ -80,7 +81,7 @@ IF (BROTLI_DEC_FOUND AND BROTLI_ENC_FOUND)
     LIST(APPEND CORE_FILES
         lib/certificate_compression.c)
     LIST(APPEND CORE_EXTRA_LIBS ${BROTLI_DEC_LIBRARIES} ${BROTLI_ENC_LIBRARIES})
-    LIST(APPEND CORE_EXTRA_LIBS_DIRS (${BROTLI_DEC_LIBRARY_DIRS} ${BROTLI_ENC_LIBRARY_DIRS}))
+    LIST(APPEND CORE_EXTRA_LIBS_DIRS ${BROTLI_DEC_LIBRARY_DIRS} ${BROTLI_ENC_LIBRARY_DIRS})
 ENDIF ()
 
 ADD_LIBRARY(picotls-core ${CORE_FILES})
@@ -188,7 +189,8 @@ IF (WITH_FUSION)
     ADD_EXECUTABLE(test-fusion.t
         deps/picotest/picotest.c
         lib/picotls.c
-        t/fusion.c)
+        t/fusion.c
+        t/quiclb.c)
     TARGET_LINK_LIBRARIES(test-fusion.t picotls-minicrypto)
     SET_TARGET_PROPERTIES(test-fusion.t PROPERTIES COMPILE_FLAGS "-mavx2 -maes -mpclmul -mvaes -mvpclmulqdq")
     IF (WITH_DTRACE)
@@ -208,7 +210,7 @@ IF (WITH_MBEDTLS)
     message(STATUS "mbedtls/include: ${MBEDTLS_INCLUDE_DIRS}")
     message(STATUS "mbedtls libraries: ${MBEDTLS_LIBRARIES}")
     INCLUDE_DIRECTORIES(${MBEDTLS_INCLUDE_DIRS})
-    ADD_LIBRARY(picotls-mbedtls lib/mbedtls.c)
+    ADD_LIBRARY(picotls-mbedtls lib/mbedtls.c lib/mbedtls_sign.c)
     if (picotls_BUILD_TESTS)
         ADD_EXECUTABLE(test-mbedtls.t
            deps/picotest/picotest.c
@@ -217,6 +219,8 @@ IF (WITH_MBEDTLS)
         TARGET_LINK_LIBRARIES(test-mbedtls.t
            picotls-minicrypto picotls-mbedtls
            ${MBEDTLS_LIBRARIES})
+        SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPTLS_HAVE_MBEDTLS=1")
+        LIST(APPEND PTLSBENCH_LIBS picotls-mbedtls ${MBEDTLS_LIBRARIES})
         idf_build_executable(test-mbedtls.t)
     endif()
 

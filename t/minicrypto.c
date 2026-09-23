@@ -28,6 +28,7 @@
 #include "../deps/picotest/picotest.h"
 #include "../lib/cifra.c"
 #include "../lib/uecc.c"
+#include "picotls/asn1.h"
 #include "test.h"
 
 static void test_secp256r1_key_exchange(void)
@@ -135,6 +136,57 @@ static void test_hrr(void)
     ptls_free(server);
 }
 
+static void test_asn1_empty_input(void)
+{
+    int decode_error = 0;
+    uint32_t length = 0;
+    size_t last_byte = 0;
+    uint8_t dummy = 0x30;
+
+    ptls_asn1_get_expected_type_and_length(&dummy, 0, 0, 0x30, &length, NULL, &last_byte, &decode_error, NULL);
+    ok(decode_error != 0);
+
+    decode_error = 0;
+    uint8_t buf[2] = {0x30, 0x00};
+    ptls_asn1_get_expected_type_and_length(buf, 2, 2, 0x30, &length, NULL, &last_byte, &decode_error, NULL);
+    ok(decode_error != 0);
+
+    decode_error = 0;
+    ptls_asn1_get_expected_type_and_length(buf, 1, 1, 0x04, &length, NULL, &last_byte, &decode_error, NULL);
+    ok(decode_error != 0);
+}
+
+static size_t build_nested_asn1_sequence(uint8_t *buf, size_t depth)
+{
+    size_t len = 3;
+
+    buf[2 * depth] = 0x04;
+    buf[2 * depth + 1] = 0x01;
+    buf[2 * depth + 2] = 0x00;
+
+    for (size_t i = depth; i != 0; --i) {
+        size_t off = 2 * (i - 1);
+        buf[off] = 0x30;
+        buf[off + 1] = (uint8_t)len;
+        len += 2;
+    }
+
+    return len;
+}
+
+static void test_asn1_recursion(void)
+{
+    uint8_t shallow[3 + 2 * 32];
+    uint8_t too_deep[3 + 2 * 40];
+    size_t len;
+
+    len = build_nested_asn1_sequence(shallow, 32);
+    ok(ptls_asn1_validation(shallow, len, NULL) == 0);
+
+    len = build_nested_asn1_sequence(too_deep, 40);
+    ok(ptls_asn1_validation(too_deep, len, NULL) == PTLS_ERROR_INCORRECT_ASN1_SYNTAX);
+}
+
 DEFINE_FFX_AES128_ALGORITHMS(minicrypto);
 DEFINE_FFX_CHACHA20_ALGORITHMS(minicrypto);
 
@@ -150,20 +202,19 @@ int main(int argc, char **argv)
     ptls_minicrypto_init_secp256r1sha256_sign_certificate(&sign_certificate,
                                                           ptls_iovec_init(SECP256R1_PRIVATE_KEY, SECP256R1_PRIVATE_KEY_SIZE));
 
-    ptls_context_t ctxbuf = {ptls_minicrypto_random_bytes,
-                             &ptls_get_time,
-                             ptls_minicrypto_key_exchanges,
-                             ptls_minicrypto_cipher_suites_all,
-                             {&cert, 1},
-                             {{NULL}},
-                             NULL,
-                             NULL,
-                             &sign_certificate.super};
+    ptls_context_t ctxbuf = {.random_bytes = ptls_minicrypto_random_bytes,
+                             .get_time = &ptls_get_time,
+                             .key_exchanges = ptls_minicrypto_key_exchanges,
+                             .cipher_suites = ptls_minicrypto_cipher_suites_all,
+                             .certificates = {&cert, 1},
+                             .sign_certificate = &sign_certificate.super};
     ctx = ctx_peer = &ctxbuf;
     ADD_FFX_AES128_ALGORITHMS(minicrypto);
     ADD_FFX_CHACHA20_ALGORITHMS(minicrypto);
 
     subtest("picotls", test_picotls);
+    subtest("asn1-bounds", test_asn1_empty_input);
+    subtest("asn1-recursion", test_asn1_recursion);
     subtest("hrr", test_hrr);
 
     return done_testing();

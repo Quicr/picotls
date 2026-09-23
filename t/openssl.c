@@ -29,7 +29,9 @@
 #include <openssl/opensslv.h>
 #include <openssl/bio.h>
 #include <openssl/pem.h>
+#if !defined(OPENSSL_NO_ENGINE)
 #include <openssl/engine.h>
+#endif
 #if !defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x30000000L
 #include <openssl/provider.h>
 #endif
@@ -124,22 +126,33 @@ static void test_bf(void)
 
 static void test_key_exchanges(void)
 {
-    test_key_exchange(&ptls_openssl_secp256r1, &ptls_openssl_secp256r1);
-    test_key_exchange(&ptls_openssl_secp256r1, &ptls_minicrypto_secp256r1);
-    test_key_exchange(&ptls_minicrypto_secp256r1, &ptls_openssl_secp256r1);
+    subtest("secp256r1-self", test_key_exchange, &ptls_openssl_secp256r1, &ptls_openssl_secp256r1);
+    subtest("secp256r1-to-minicrypto", test_key_exchange, &ptls_openssl_secp256r1, &ptls_minicrypto_secp256r1);
+    subtest("secp256r1-from-minicrypto", test_key_exchange, &ptls_minicrypto_secp256r1, &ptls_openssl_secp256r1);
 
 #if PTLS_OPENSSL_HAVE_SECP384R1
-    test_key_exchange(&ptls_openssl_secp384r1, &ptls_openssl_secp384r1);
+    subtest("secp384r1", test_key_exchange, &ptls_openssl_secp384r1, &ptls_openssl_secp384r1);
 #endif
 
 #if PTLS_OPENSSL_HAVE_SECP521R1
-    test_key_exchange(&ptls_openssl_secp521r1, &ptls_openssl_secp521r1);
+    subtest("secp521r1", test_key_exchange, &ptls_openssl_secp521r1, &ptls_openssl_secp521r1);
 #endif
 
 #if PTLS_OPENSSL_HAVE_X25519
-    test_key_exchange(&ptls_openssl_x25519, &ptls_openssl_x25519);
-    test_key_exchange(&ptls_openssl_x25519, &ptls_minicrypto_x25519);
-    test_key_exchange(&ptls_minicrypto_x25519, &ptls_openssl_x25519);
+    subtest("x25519-self", test_key_exchange, &ptls_openssl_x25519, &ptls_openssl_x25519);
+    subtest("x25519-to-minicrypto", test_key_exchange, &ptls_openssl_x25519, &ptls_minicrypto_x25519);
+    subtest("x25519-from-minicrypto", test_key_exchange, &ptls_minicrypto_x25519, &ptls_openssl_x25519);
+#endif
+
+#if PTLS_OPENSSL_HAVE_X25519MLKEM768
+    subtest("X25519MLKEM768", test_key_exchange, &ptls_openssl_x25519mlkem768, &ptls_openssl_x25519mlkem768);
+#endif
+#if PTLS_OPENSSL_HAVE_MLKEM
+    subtest("MLKEM512", test_key_exchange, &ptls_openssl_mlkem512, &ptls_openssl_mlkem512);
+    subtest("MLKEM768", test_key_exchange, &ptls_openssl_mlkem768, &ptls_openssl_mlkem768);
+    subtest("MLKEM1024", test_key_exchange, &ptls_openssl_mlkem1024, &ptls_openssl_mlkem1024);
+    subtest("SecP256r1MLKEM768", test_key_exchange, &ptls_openssl_secp256r1mlkem768, &ptls_openssl_secp256r1mlkem768);
+    subtest("SecP384r1MLKEM1024", test_key_exchange, &ptls_openssl_secp384r1mlkem1024, &ptls_openssl_secp384r1mlkem1024);
 #endif
 }
 
@@ -374,6 +387,7 @@ Exit:
 
 #if ASYNC_TESTS
 
+#if !defined(OPENSSL_NO_ENGINE)
 static ENGINE *load_engine(const char *name)
 {
     ENGINE *e;
@@ -387,6 +401,7 @@ static ENGINE *load_engine(const char *name)
 
     return e;
 }
+#endif
 
 static struct {
     struct {
@@ -467,7 +482,7 @@ static void many_handshakes(void)
             case PTLS_ERROR_ASYNC_OPERATION: {
                 ptls_async_job_t *job = ptls_get_async_job(qat.conns[offending].tls);
                 assert(job->get_fd != NULL);
-                qat.conns[offending].wait_fd = job->get_fd(job);
+                qat.conns[offending].wait_fd = (int)job->get_fd(job);
                 assert(qat.conns[offending].wait_fd != -1);
             } break;
             default:
@@ -542,6 +557,7 @@ int main(int argc, char **argv)
 #endif
 
     subtest("bf", test_bf);
+    subtest("quiclb", test_quiclb, &ptls_openssl_quiclb);
 
     subtest("key-exchange", test_key_exchanges);
 
@@ -599,15 +615,12 @@ int main(int argc, char **argv)
     ptls_iovec_t minicrypto_certificate = ptls_iovec_init(SECP256R1_CERTIFICATE, sizeof(SECP256R1_CERTIFICATE) - 1);
     ptls_minicrypto_init_secp256r1sha256_sign_certificate(
         &minicrypto_sign_certificate, ptls_iovec_init(SECP256R1_PRIVATE_KEY, sizeof(SECP256R1_PRIVATE_KEY) - 1));
-    ptls_context_t minicrypto_ctx = {ptls_minicrypto_random_bytes,
-                                     &ptls_get_time,
-                                     ptls_minicrypto_key_exchanges,
-                                     ptls_minicrypto_cipher_suites,
-                                     {&minicrypto_certificate, 1},
-                                     {{NULL}},
-                                     NULL,
-                                     NULL,
-                                     &minicrypto_sign_certificate.super};
+    ptls_context_t minicrypto_ctx = {.random_bytes = ptls_minicrypto_random_bytes,
+                                     .get_time = &ptls_get_time,
+                                     .key_exchanges = ptls_minicrypto_key_exchanges,
+                                     .cipher_suites = ptls_minicrypto_cipher_suites,
+                                     .certificates = {&minicrypto_certificate, 1},
+                                     .sign_certificate = &minicrypto_sign_certificate.super};
     ctx = &openssl_ctx;
     ctx_peer = &minicrypto_ctx;
     subtest("vs. minicrypto", test_picotls);
@@ -630,6 +643,7 @@ int main(int argc, char **argv)
     subtest("many-handshakes-non-async", many_handshakes);
     openssl_sign_certificate.async = 0;
     subtest("many-handshakes-async", many_handshakes);
+#if !defined(OPENSSL_NO_ENGINE)
     { /* qatengine should be tested at last, because we do not have the code to unload or un-default it */
         const char *engine_name = "qatengine";
         ENGINE *qatengine;
@@ -642,6 +656,7 @@ int main(int argc, char **argv)
             note("%s not found", engine_name);
         }
     }
+#endif
 #endif
 
     int ret = done_testing();

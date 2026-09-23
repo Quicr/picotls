@@ -47,6 +47,7 @@
 #include <wmmintrin.h>
 #include "picotls.h"
 #include "picotls/fusion.h"
+#include "./quiclb-impl.h"
 
 #if defined(__clang__)
 #if __has_feature(address_sanitizer)
@@ -1065,8 +1066,8 @@ static void ctr_transform(ptls_cipher_context_t *_ctx, void *output, const void 
 {
     struct ctr_context *ctx = (struct ctr_context *)_ctx;
 
-    assert((ctx->is_ready && len <= 16) ||
-           !"CTR transfomation is supported only once per call to `init` and the maximum size is limited  to 16 bytes");
+    assert(ctx->is_ready && len <= 16 &&
+           "CTR transfomation is supported only once per call to `init` and the maximum size is limited to 16 bytes");
     ctx->is_ready = 0;
 
     if (len < 16) {
@@ -1137,8 +1138,10 @@ void aead_do_encrypt(struct st_ptls_aead_context_t *_ctx, void *output, const vo
 {
     struct aesgcm_context *ctx = (void *)_ctx;
 
-    if (inlen + aadlen > ctx->aesgcm->capacity)
+    if (inlen + aadlen > ctx->aesgcm->capacity) {
         ctx->aesgcm = ptls_fusion_aesgcm_set_capacity(ctx->aesgcm, inlen + aadlen);
+        assert(ctx->aesgcm != NULL && "fusion assumes sufficient amount of memory to be available");
+    }
     ptls_fusion_aesgcm_encrypt(ctx->aesgcm, output, input, inlen, calc_counter(ctx, seq), aad, aadlen, supp);
 }
 
@@ -1157,8 +1160,10 @@ static size_t aead_do_decrypt(ptls_aead_context_t *_ctx, void *output, const voi
         return SIZE_MAX;
 
     size_t enclen = inlen - 16;
-    if (enclen + aadlen > ctx->aesgcm->capacity)
+    if (enclen + aadlen > ctx->aesgcm->capacity) {
         ctx->aesgcm = ptls_fusion_aesgcm_set_capacity(ctx->aesgcm, enclen + aadlen);
+        assert(ctx->aesgcm != NULL && "fusion assumes sufficient amount of memory to be available");
+    }
     if (!ptls_fusion_aesgcm_decrypt(ctx->aesgcm, output, input, enclen, calc_counter(ctx, seq), aad, aadlen,
                                     (const uint8_t *)input + enclen))
         return SIZE_MAX;
@@ -1201,7 +1206,7 @@ static int aesgcm_setup(ptls_aead_context_t *_ctx, int is_enc, const void *key, 
     ctx->super.do_decrypt = aead_do_decrypt;
 
     ctx->aesgcm = new_aesgcm(key, key_size, 1500 /* assume ordinary packet size */, 0 /* no support for aesni256 yet */);
-
+    assert(ctx->aesgcm != NULL && "fusion assumes sufficient amount of memory to be available");
     return 0;
 }
 
@@ -2137,7 +2142,7 @@ static int non_temporal_setup(ptls_aead_context_t *_ctx, int is_enc, const void 
         new_aesgcm(key, key_size,
                    7 * (ptls_fusion_can_aesni256 ? 32 : 16), // 6 blocks at once, plus len(A) | len(C) that we might append
                    aesni256);
-
+   assert(ctx->aesgcm != NULL && "fusion assumes sufficient amount of memory to be available");
     return 0;
 }
 
@@ -2177,6 +2182,55 @@ ptls_aead_algorithm_t ptls_non_temporal_aes256gcm = {"AES256-GCM",
                                                      PTLS_X86_CACHE_LINE_ALIGN_BITS,
                                                      sizeof(struct aesgcm_context),
                                                      non_temporal_aes256gcm_setup};
+
+struct fusion_quiclb_context {
+    ptls_cipher_context_t super;
+    ptls_fusion_aesecb_context_t aesecb;
+};
+
+static void fusion_quiclb_dispose(ptls_cipher_context_t *_ctx)
+{
+    struct fusion_quiclb_context *ctx = (struct fusion_quiclb_context *)_ctx;
+    ptls_fusion_aesecb_dispose(&ctx->aesecb);
+}
+
+static inline void fusion_quiclb_aes(void *aesecb, union picotls_quiclb_block *block)
+{
+    block->m128 = aesecb_encrypt(aesecb, block->m128);
+}
+
+static void fusion_quiclb_encrypt(ptls_cipher_context_t *_ctx, void *output, const void *input, size_t len)
+{
+    struct fusion_quiclb_context *ctx = (struct fusion_quiclb_context *)_ctx;
+    picotls_quiclb_transform(fusion_quiclb_aes, &ctx->aesecb, output, input, len, 1);
+}
+
+static void fusion_quiclb_decrypt(ptls_cipher_context_t *_ctx, void *output, const void *input, size_t len)
+{
+    struct fusion_quiclb_context *ctx = (struct fusion_quiclb_context *)_ctx;
+    picotls_quiclb_transform(fusion_quiclb_aes, &ctx->aesecb, output, input, len, 0);
+}
+
+static int fusion_quiclb_setup_crypto(ptls_cipher_context_t *_ctx, int is_enc, const void *key)
+{
+    struct fusion_quiclb_context *ctx = (struct fusion_quiclb_context *)_ctx;
+
+    ctx->super.do_dispose = fusion_quiclb_dispose;
+    ctx->super.do_init = picotls_quiclb_do_init;
+    ctx->super.do_transform = is_enc ? fusion_quiclb_encrypt : fusion_quiclb_decrypt;
+    ptls_fusion_aesecb_init(&ctx->aesecb, 1, key, PTLS_AES128_KEY_SIZE, 0);
+
+    return 0;
+}
+
+ptls_cipher_algorithm_t ptls_fusion_quiclb = {
+    .name = "QUICLB",
+    .key_size = PTLS_QUICLB_KEY_SIZE,
+    .block_size = PTLS_QUICLB_DEFAULT_BLOCK_SIZE,
+    .iv_size = 0,
+    .context_size = sizeof(struct fusion_quiclb_context),
+    .setup_crypto = fusion_quiclb_setup_crypto,
+};
 
 #ifdef _WINDOWS
 /**

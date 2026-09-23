@@ -86,10 +86,13 @@ struct st_util_save_ticket_t {
     char fn[MAXPATHLEN];
 };
 
-static int util_save_ticket_cb(ptls_save_ticket_t *_self, ptls_t *tls, ptls_iovec_t src)
+static int util_save_ticket_cb(ptls_save_ticket_t *_self, ptls_t *tls, ptls_iovec_t src,
+                               const ptls_save_ticket_properties_t *properties)
 {
     struct st_util_save_ticket_t *self = (struct st_util_save_ticket_t *)_self;
     FILE *fp;
+
+    (void)properties;
 
     if ((fp = fopen(self->fn, "wb")) == NULL) {
         fprintf(stderr, "failed to open file:%s:%s\n", self->fn, strerror(errno));
@@ -339,20 +342,29 @@ static void ech_save_retry_configs(void)
     fclose(fp);
 }
 
-static void ech_setup_configs(const char *fn)
+static ptls_iovec_t load_file(const char *fn)
 {
     FILE *fp;
+    ptls_iovec_t buf;
 
     if ((fp = fopen(fn, "rt")) == NULL) {
-        fprintf(stderr, "failed to open ECHConfigList file:%s:%s\n", fn, strerror(errno));
+        fprintf(stderr, "failed to open file:%s:%s\n", fn, strerror(errno));
         exit(1);
     }
-    ech.config_list.base = malloc(65536);
-    if ((ech.config_list.len = fread(ech.config_list.base, 1, 65536, fp)) == 65536) {
-        fprintf(stderr, "ECHConfigList is too large:%s\n", fn);
-        exit(1);
+    buf.len = 65536;
+    if ((buf.base = malloc(buf.len)) == NULL) {
+        fprintf(stderr, "no memory\n");
+        abort();
     }
+    buf.len = fread(buf.base, 1, buf.len, fp);
     fclose(fp);
+
+    return buf;
+}
+
+static void ech_setup_configs(const char *fn)
+{
+    ech.config_list = load_file(fn);
     ech.retry.fn = strdup(fn);
 }
 
